@@ -1,0 +1,124 @@
+---
+title: "Pre-Processing Data"
+author: "NL"
+date: "12 1 2020"
+output: html_document
+---
+
+##1:load required packages
+```{r}
+#R.version.string
+#install.packages("installr") 
+#updateR()
+library(installr)
+#install.packages("textcat")
+#install.packages("xlsx")
+library(textcat)
+library(xlsx)
+#install.packages("dplyr")
+library(dplyr)
+library(jsonlite)
+#install.packages("reshape2")
+library(reshape2)
+#install.packages("splitstackshape")
+library(splitstackshape)
+#install.packages("readr")
+library(readr)
+#install.packages("lubridate")
+require(lubridate)
+#install.packages("stringr")
+library(stringr)
+```
+
+##2:
+#import json file
+#detect language
+#delete retweets
+```{r}
+#develop function for preprocessing
+
+batch_clean <- function(path){
+  #load dataset
+  ##transform text as string
+  tweets <- jsonlite::fromJSON(path, flatten=TRUE)
+  tweets$text <- as.character(tweets$text)
+  
+  #language classifier with textcat package
+  tweets_lang_en <- subset(tweets, lang == "en" | lang == "und" | is.na(tweets$lang)) #this includes  English tweets recognized by twitter
+  tweets_lang_en$textlang <- textcat(tweets_lang_en$text)
+
+  #subset dataset to English tweets only
+  tweets_en_all <- subset(tweets_lang_en, lang == "en" | lang == "und" | textlang == "english" & is.na(tweets_lang_en$lang))
+
+  #remove retweets = tweets that start with "RT"
+  clean_tweets <- tweets_en_all %>%
+    filter(!str_detect(text, "^RT /*")) %>% 
+    dplyr::filter(is.na(retweeted_status))
+  
+  #save small dataset
+  tweets_processed <- subset(clean_tweets, select = c(text, id, created_at))
+  return(tweets_processed)
+}
+
+#use function on Greta Thunberg tweets
+GT_tweets <- batch_clean(path = "../@GretaThunberg_tweets.json")
+
+#save subset English dataset without retweets
+write.csv(GT_tweets, "../Data/batch_clean.csv", row.names = FALSE, quote = TRUE)
+```
+
+##3:selecting hateful or offensive tweets only
+#The used hate speech classifier is based on the work of Davidson et al (2017)
+[https://aaai.org/ocs/index.php/ICWSM/ICWSM17/paper/view/15665]
+
+```{r}
+
+#function to subset only hateful and offensive tweets
+
+batch_hate <- function(path){
+  #load labelled dataset
+  file <- read.csv(path, header = TRUE)
+  print(table(file$hatecat))
+  batch_hate <- subset(file, hatecat!=2)
+  # 0 = hate speech, 1 = offensive speech, 2 = no hate speech
+  return(batch_hate)
+  }
+
+#apply function to tweet file
+tweets_hate <- batch_hate(path = "../Data/tweets_hateclassifier_labelled.csv")
+
+#save subset dataset containing only hateful and offensive tweets
+write.csv(tweets_hate, "C:/Python27/batch_hate.csv", row.names = FALSE, quote = TRUE)
+
+#in total, the developed hate speech classifier by Davidson et al identifies 17.523 English tweets as hateful or offensive speech 
+#more than half of these hateful or offensive tweets (9190 tweets) stem from the period September 2019 (when Greta Thunberg was in New York) 
+```
+
+##4: stratifying sample and preprocessing date formats
+```{r}
+#use lubridate package to create automated dates
+#create separate variable for the day of tweet posting
+batch <- read.csv("../Data/batch_clean.csv", stringsAsFactors =FALSE)
+batch <- batch %>%
+  mutate(idchar = as.character(id),
+  created_at_date = ymd_hms(created_at),
+  date = date(created_at_date)) 
+
+#stratify data: sample of 10% per day of posted tweets from 20 August 2018 - 31 December 2019
+batch_strata <- batch %>%
+  stratified(group = "date", size = 0.1)
+
+batch_strata %>%
+  group_by(date) %>%
+  arrange(date) %>%
+  count()
+
+batch %>%
+  group_by(date)%>%
+  count() %>%
+  inner_join(batch_strata %>% 
+              group_by(date) %>% 
+              count(), 
+              by = "date")
+
+```
