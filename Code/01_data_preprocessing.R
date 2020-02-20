@@ -1,7 +1,7 @@
 #R.version.string
 #install.packages("installr") 
 #updateR()
-library(installr)
+#library(installr)
 #install.packages("textcat")
 library(textcat)
 #install.packages("dplyr")
@@ -42,7 +42,7 @@ batch_clean <- function(path){
 }
 
 # Get a list of files and run our pipeline on them
-files <- list.files(path="/usr/local/apsis/slowhome/galm/exports/@GretaThunberg", pattern="7_tweets.json", full.names=TRUE, recursive=FALSE)
+files <- list.files(path="/usr/local/apsis/slowhome/galm/exports/@GretaThunberg", pattern="_tweets.json", full.names=TRUE, recursive=FALSE)
 
 # do.call flattens a list of lists
 ids <- do.call(c, lapply(files, function(x) {
