@@ -2,7 +2,7 @@ require(caret)
 require(dplyr)
 require(stringr)
 require(tidyr)
-require(readtext)
+#require(readtext)
 require(quanteda)
 require(quanteda.textmodels)
 #install.packages("readtext")
@@ -12,7 +12,6 @@ require(quanteda.textmodels)
 #devtools::install_github("quanteda/quanteda.corpora")
 require(quanteda.corpora)
 require(tm)
-require(caret)
 require(tidytext)
 require(e1071)
 require(klaR)
@@ -20,7 +19,7 @@ require(klaR)
 #install.packages("naivebayes")
 require(naivebayes)
 #install.packages("h2o")
-require(h2o)
+#require(h2o)
 #install.packages("kernlab")
 require(kernlab)
 #install.packages("vecsets")
@@ -29,28 +28,34 @@ require(vecsets)
 require(doParallel)
 #install.packages("vip")
 require(vip)
-install.packages("rsample")
+#install.packages("rsample")
 require(rsample)
 
 #read data for classifier
-tweets_all_merged <- readRDS("tweets_all_merged.RData")
-dfm <- readRDS("dfmnostop_all.RDS")
-
+tweets_all_merged <- readRDS("/home/max/Documents/papers/greta/Hate-Speech-Greta-Thunberg/Data/tweets_all_merged.RData")
+dfm <- readRDS("/home/max/Documents/papers/greta/Hate-Speech-Greta-Thunberg/Data/dfmnostop_all.RDS")
+dfm <- dfm_trim(dfm, min_docfreq = 5)
 
 #programme function for classification for all data
-cat_classifier <- function(category,var,df){
+cat_classifier <- function(category,var,df, do_varimp=FALSE, sample=FALSE){
   
   #split in labelled (for CV) and unlabelled (for prediction)
   docvars(category, var) <- df %>% dplyr::select(var)  
   labelled <- category %>% 
     dfm_subset((docvars(category, var)) == "0"| (docvars(category, var)) == "1" | (docvars(category, var)) == "2" | (docvars(category, var)) == "3" | 
                  (docvars(category, var)) == "4" | (docvars(category, var)) == "5")
-  unlabelled <- category[is.na(docvars(category, var)),][1:35,]      #here, I subset --> this would be the full / stratified data then [1:200,]
+  
+  if (sample==TRUE) {
+    labelled <- labelled[1:200,]
+  }
+  
   split <- sample(c("train", "test"), size=ndoc(labelled), prob=c(0.80, 0.20), replace=TRUE)
   train <- which(split=="train") 
   test <- which(split=="test")
   train <- labelled[train,]
   test <- labelled[test,]
+  
+  train <- dfm_trim(train, min_termfreq = 1)
   
   #upsample training data
   if(var != "hatescaleM"){
@@ -65,26 +70,27 @@ cat_classifier <- function(category,var,df){
   } else {
     balanced_dfm <- train  
   }
-  train <- dfm_trim(balanced_dfm, min_termfreq = 1)
+  
+  train <- balanced_dfm
+  print(dim(train))
   feat <- featnames(train)
-  test <- dfm_select(test, pattern = feat, selection = "keep")
+  test <- dfm_match(test, feat)
   if(var != "hatescale" & var != "hatescaleM"){
     levels(docvars(test, var)) <- c("1", "2")
   }
-  unlabelled <- dfm_select(unlabelled, pattern = feat, selection = "keep")
-  if(var != "hatescale" & var != "hatescaleM"){
-    levels(docvars(unlabelled, var)) <- c("1", "2")
-  }
   
   #tune
+  print("cross validating")
   set.seed(124)
+  start.time <- Sys.time()
   model_tune <- tune(svm, 
                      train.x = train,  
                      train.y = docvars(train, var), 
                      kernel = "linear", 
                      tunecontrol = tune.control(
-                       nrepeat = 10, sampling = "cross", cross = 10, best.model = TRUE, performances = TRUE),
+                       nrepeat = 1, sampling = "cross", cross = 10, best.model = TRUE, performances = TRUE),
                      ranges = list(gamma = c(0.5,1,2), cost = 10^(-1:2)))
+  print(Sys.time() - start.time)
   cost <- model_tune$best.parameters$cost
   gamma <- model_tune$best.parameters$gamma
   pred <- predict(model_tune$best.model, newdata = test)
@@ -100,19 +106,25 @@ cat_classifier <- function(category,var,df){
     print(rmse)
   }
   print(summary(model_tune))
+  save(model_tune, file=paste("Data/model_tune_svm_",var,".RData",sep=""))
     
   #variable importance
   set.seed(4567)
-  if(var != "hatescaleM"){
-    varimp <- vi(model_tune$best.model, method = "permute", train = train, 
-                 target = docvars(train, var), metric = "accuracy", 
-                 pred_wrapper = predict) %>% head(50)
+  if (do_varimp==TRUE) {
+    if(var != "hatescaleM"){
+      varimp <- vi(model_tune$best.model, method = "permute", train = train, 
+                   target = docvars(train, var), metric = "accuracy", 
+                   pred_wrapper = predict, parallel=TRUE) %>% head(50)
+    } else {
+      varimp <- vi(model_tune$best.model, method = "permute", train = train, 
+                   target = docvars(train, var), metric = "rmse",  
+                   pred_wrapper = predict) %>% head(50)
+    }    
   } else {
-    varimp <- vi(model_tune$best.model, method = "permute", train = train, 
-                 target = docvars(train, var), metric = "rmse",  
-                 pred_wrapper = predict) %>% head(50)
+    varimp <- NULL
   }
-  print(varimp)
+
+  
   
   #predicting unlabelled tweets
   if(var != "hatescaleM"){
@@ -125,16 +137,37 @@ cat_classifier <- function(category,var,df){
     balanced_test <- rbind(test, test[ids$id,])
     docvars(balanced_test, var) <-  c((docvars(test, var)), (docvars(test[ids$id,], var)))
     labelled <- rbind(train, balanced_test)
+    labelled <- dfm_match(labelled, feat)
     docvars(labelled, var) <-  as.factor(c((docvars(train, var)), (docvars(balanced_test, var))))
   } else {
-    labelled <- dfm_select(labelled, pattern = feat, selection = "keep")
+    labelled <- dfm_match(labelled, feat)
   }
   
   set.seed(7890)
+  start.time <- Sys.time()
   pred_tune <- svm(
     x = labelled, 
-    y = docvars(labelled, var), scale = TRUE, cross = 10, kernel = "linear", cost = cost, gamma = gamma)
+    y = docvars(labelled, var), scale = TRUE,
+    kernel = "linear", cost = cost, gamma = gamma)
+  write.svm(pred_tune, paste("Data/pred_tune_svm_",var,".file",sep=""),  paste("Data/pred_tune_scale_",var,".file",sep=""))
+  print(Sys.time() - start.time)
+  
+  
+  
+  unlabelled <- category[is.na(docvars(category, var)),]
+  if (sample==TRUE) {
+    unlabelled <- unlabelled[1:200,] 
+  }     #here, I subset --> this would be the full / stratified data then [1:200,]
+  unlabelled <- dfm_match(unlabelled, feat)
+  
+  if(var != "hatescale" & var != "hatescaleM"){
+    levels(docvars(unlabelled, var)) <- c("1", "2")
+  }
+  
+  start.time <- Sys.time()
   pred <- predict(object = pred_tune, newdata = unlabelled)
+  print(Sys.time() - start.time)
+  print(length(pred))
   
   
   #dataframe
@@ -223,15 +256,18 @@ cat_classifier <- function(category,var,df){
                                        "F1_1" ,"F1_2" ,"F1_3" ,"F1_4" ,"F1_5", "RMSE"))
 
 #prediction on hatenom and hatescale on all data
-  cluster <- makeCluster(detectCores())
+  cluster <- makeCluster(3)
   registerDoParallel(cluster)
   start.time <- Sys.time()
-
+  
+  do_varimp=FALSE
   
 #1: CLASSIFIER FOR HATE   
   outcome_hate <- foreach (i = c(42,43,45), .packages = c("caret", "dplyr", "stringr", "e1071", "quanteda", "tidytext", "tidyr", "vip")) %dopar%  {
     result <- cat_classifier(dfm,names(tweets_all_merged[i]), tweets_all_merged)
   }
+  
+  save(outcome_hate, file="Data/outcome_hate.RData")
                     
   print(Sys.time() - start.time)
   stopCluster(cluster)
@@ -243,7 +279,9 @@ cat_classifier <- function(category,var,df){
     classified <- left_join(classified, predids, by="tweet__id")
     performance <- left_join(performance, metric, by="metric")
   }
-  varimp_hate <- list(hatescale = outcome_hate[1][[1]]$varimp, hatenomNA = outcome_hate[2][[1]]$varimp, hatescaleM = outcome_hate[3][[1]]$varimp)
+  if (do_varimp==TRUE) {
+    varimp_hate <- list(hatescale = outcome_hate[1][[1]]$varimp, hatenomNA = outcome_hate[2][[1]]$varimp, hatescaleM = outcome_hate[3][[1]]$varimp)
+  }
   classified$hatescaleM <- round(classified$hatescaleM, digits = 0)
 
 #data for second classifier
@@ -252,8 +290,9 @@ cat_classifier <- function(category,var,df){
     dplyr::filter(tweet__id %in% (ids_pred$tweet__id) | hatenomNA == 1 & X2_gretathunberg == 1) 
   dfm_categories <- dfm[tweets_categories$tweet__id,] %>% 
     dfm_trim(min_termfreq = 2, min_docfreq = 2)
+  
 ##prediction on categories only for predicted hatenom
-  cluster <- makeCluster(detectCores())
+  cluster <- makeCluster(min(c(detectCores()-1,18)))
   registerDoParallel(cluster)
   start.time <- Sys.time()
   
@@ -273,3 +312,5 @@ cat_classifier <- function(category,var,df){
     classified <- left_join(classified, predids, by="tweet__id")
     performance <- left_join(performance, metric, by="metric")
   }
+  
+  save(outcome_cat, file="Data/results.RData")
