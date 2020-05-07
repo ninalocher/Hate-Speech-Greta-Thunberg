@@ -32,8 +32,8 @@ require(vip)
 require(rsample)
 
 #read data for classifier
-tweets_all_merged <- readRDS("/home/max/Documents/papers/greta/Hate-Speech-Greta-Thunberg/Data/tweets_all_merged.RData")
-dfm <- readRDS("/home/max/Documents/papers/greta/Hate-Speech-Greta-Thunberg/Data/dfmnostop_all.RDS")
+tweets_all_merged <- readRDS("Data/tweets_all_merged.RData")
+dfm <- readRDS("Data/dfmnostop_all.RDS")
 dfm <- dfm_trim(dfm, min_docfreq = 5)
 
 #programme function for classification for all data
