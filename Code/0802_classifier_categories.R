@@ -29,23 +29,24 @@ require(vecsets)
 require(doParallel)
 #install.packages("vip")
 require(vip)
-install.packages("rsample")
+#install.packages("rsample")
 require(rsample)
 
 #read data for classifier
-tweets_all_merged <- readRDS("tweets_all_merged.RData")
-dfm <- readRDS("dfmnostop_all.RDS")
+tweets_all_merged <- readRDS("Data/tweets_all_merged.RData")
+dfm <- readRDS("Data/dfmnostop_all.RDS")
 
 
 #programme function for classification for all data
 cat_classifier <- function(category,var,df){
-  
+    print("classifying...")
+    print(var)
   #split in labelled (for CV) and unlabelled (for prediction)
   docvars(category, var) <- df %>% dplyr::select(var)  
   labelled <- category %>% 
     dfm_subset((docvars(category, var)) == "0"| (docvars(category, var)) == "1" | (docvars(category, var)) == "2" | (docvars(category, var)) == "3" | 
                  (docvars(category, var)) == "4" | (docvars(category, var)) == "5")
-  unlabelled <- category[is.na(docvars(category, var)),][1:35,]      #here, I subset --> this would be the full / stratified data then [1:200,]
+  unlabelled <- category[is.na(docvars(category, var)),]      #here, I subset --> this would be the full / stratified data then [1:200,]
   split <- sample(c("train", "test"), size=ndoc(labelled), prob=c(0.80, 0.20), replace=TRUE)
   train <- which(split=="train") 
   test <- which(split=="test")
@@ -134,6 +135,7 @@ cat_classifier <- function(category,var,df){
   pred_tune <- svm(
     x = labelled, 
     y = docvars(labelled, var), scale = TRUE, cross = 10, kernel = "linear", cost = cost, gamma = gamma)
+  write.svm(pred_tune, paste("Data/svm_",var,".file",sep=""),  paste("Data/scale_",var,".file",sep=""))
   pred <- predict(object = pred_tune, newdata = unlabelled)
   
   
@@ -223,7 +225,7 @@ cat_classifier <- function(category,var,df){
                                        "F1_1" ,"F1_2" ,"F1_3" ,"F1_4" ,"F1_5", "RMSE"))
 
 #prediction on hatenom and hatescale on all data
-  cluster <- makeCluster(detectCores())
+  cluster <- makeCluster(2)
   registerDoParallel(cluster)
   start.time <- Sys.time()
 
@@ -264,7 +266,9 @@ cat_classifier <- function(category,var,df){
   }
 
   print(Sys.time() - start.time)
-  stopCluster(cluster) 
+    stopCluster(cluster)
+
+  
 
 #left join all predids and metrics together for categories
   for(i in 1:19){
@@ -273,3 +277,5 @@ cat_classifier <- function(category,var,df){
     classified <- left_join(classified, predids, by="tweet__id")
     performance <- left_join(performance, metric, by="metric")
   }
+
+  save(result, predids, metric, classified, performance, file="Data/results.RData")
