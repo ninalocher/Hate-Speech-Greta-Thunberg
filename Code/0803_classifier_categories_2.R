@@ -41,7 +41,7 @@ tweets_all_merged <- readRDS("Data/tweets_all_merged.RData")
 dfm <- readRDS("Data/dfmnostop_all.RDS")
 dfm <- dfm_trim(dfm, min_docfreq = 5)
 
-load("~/ownCloud/twitter/@GretaThunberg/Data/Output/outcome_hate.RData")
+load("Data/Output/outcome_hate.RData")
 
 #programme function for classification for all data
 cat_classifier <- function(category,var,df, do_varimp=FALSE, sample=FALSE){
