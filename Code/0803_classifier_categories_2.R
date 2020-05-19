@@ -25,16 +25,23 @@ require(kernlab)
 #install.packages("vecsets")
 require(vecsets)
 #install.packages("doParallel")
-require(doParallel)
+
+library("Rmpi", quietly = TRUE)
+library("doMPI", quietly = TRUE)
+
 #install.packages("vip")
 require(vip)
 #install.packages("rsample")
 require(rsample)
 
+options(error=quote(assign(".mpi.err", FALSE, env = .GlobalEnv)))
+
 #read data for classifier
 tweets_all_merged <- readRDS("Data/tweets_all_merged.RData")
 dfm <- readRDS("Data/dfmnostop_all.RDS")
 dfm <- dfm_trim(dfm, min_docfreq = 5)
+
+load("Data/Output/outcome_hate.RData")
 
 #programme function for classification for all data
 cat_classifier <- function(category,var,df, do_varimp=FALSE, sample=FALSE){
@@ -255,23 +262,7 @@ cat_classifier <- function(category,var,df, do_varimp=FALSE, sample=FALSE){
                                        "Recall_1", "Recall_2", "Recall_3", "Recall_4", "Recall_5", 
                                        "F1_1" ,"F1_2" ,"F1_3" ,"F1_4" ,"F1_5", "RMSE"))
 
-#prediction on hatenom and hatescale on all data
-  cluster <- makeCluster(3)
-  registerDoParallel(cluster)
-  start.time <- Sys.time()
-  
-  do_varimp=FALSE
-  
-#1: CLASSIFIER FOR HATE   
-  outcome_hate <- foreach (i = c(42,43,45), .packages = c("caret", "dplyr", "stringr", "e1071", "quanteda", "tidytext", "tidyr", "vip")) %dopar%  {
-    result <- cat_classifier(dfm,names(tweets_all_merged[i]), tweets_all_merged)
-  }
-  
-  save(outcome_hate, file="Data/outcome_hate.RData")
-                    
-  print(Sys.time() - start.time)
-  stopCluster(cluster)
-  
+
 #left join all predids and metrics together 
   for(i in 1:3){
     predids <- outcome_hate[i][[1]]$predids
@@ -292,8 +283,8 @@ cat_classifier <- function(category,var,df, do_varimp=FALSE, sample=FALSE){
     dfm_trim(min_termfreq = 2, min_docfreq = 2)
   
 ##prediction on categories only for predicted hatenom
-  cluster <- makeCluster(min(c(detectCores()-1,18)))
-  registerDoParallel(cluster)
+  cluster <- startMPIcluster()
+  registerDoMPI(cluster)
   start.time <- Sys.time()
   
   
@@ -303,7 +294,13 @@ cat_classifier <- function(category,var,df, do_varimp=FALSE, sample=FALSE){
   }
 
   print(Sys.time() - start.time)
-  stopCluster(cluster) 
+  
+  save(outcome_cat, file="Data/outcome_cat.RData")
+  
+  closeCluster(cluster) 
+  mpi.quit()
+  
+  
 
 #left join all predids and metrics together for categories
   for(i in 1:19){
@@ -313,4 +310,4 @@ cat_classifier <- function(category,var,df, do_varimp=FALSE, sample=FALSE){
     performance <- left_join(performance, metric, by="metric")
   }
   
-  save(outcome_cat, file="Data/results.RData")
+  
